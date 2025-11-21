@@ -131,34 +131,41 @@ jobs:
                   # Download and unzip iPA
                   wget "$YOUTUBE_URL" --quiet --no-verbose -O main/YouTube.ipa
                   unzip -q main/YouTube.ipa -d main/tmp
-                  # Get the version number of the YouTube app and store it
-                  echo "YT_VERSION=$(grep -A 1 '<key>CFBundleVersion</key>' main/tmp/Payload/YouTube.app/Info.plist | grep '<string>' | awk -F'[><]' '{print $3}')" >> $GITHUB_ENV
-                  # Get the version number of the latest release
-                  wget -qO- https://github.com/dayanch96/YTLite/releases/latest > main/tmp/release_page.html
-                  YTLITE_VERSION=$(grep -o -E '/tag/v[^"]+' main/tmp/release_page.html | head -n 1 | sed 's/\/tag\/v//')
+
+                  # Get YouTube app version
+                  YT_VERSION=$(grep -A 1 '<key>CFBundleVersion</key>' main/tmp/Payload/YouTube.app/Info.plist | grep '<string>' | awk -F'[><]' '{print $3}')
+                  echo "YT_VERSION=$YT_VERSION" >> $GITHUB_ENV
+
+                  # Hardcode latest YTLite version (the old redirect method is broken since dayanch96 archived YTLite)
                   echo "YTLITE_VERSION=5.0.1" >> $GITHUB_ENV
-                  echo $YTLITE_VERSION
-                  # Remove contents in the iPA that interfere with sideloading
-                  rm -rf main/tmp/Payload/YouTube.app/_CodeSignature/CodeResources
-                  rm -rf main/tmp/Payload/YouTube.app/PlugIns/*
-                  # Modify Info.plist to remove UISupportedDevices (Python script)
-                  python - <<EOF
+                  echo "5.0.1"
+
+                  # Remove code signature stuff (always safe)
+                  rm -rf main/tmp/Payload/YouTube.app/_CodeSignature || true
+                  rm -rf main/tmp/Payload/YouTube.app/CodeResources || true
+
+                  # Safely create/clean PlugIns folder – this is the real fix for exit code 8
+                  mkdir -p main/tmp/Payload/YouTube.app/PlugIns
+                  rm -rf main/tmp/Payload/YouTube.app/PlugIns/* || true
+
+                  # Remove UISupportedDevices from Info.plist (safe python one-liner)
+                  python3 - <<'PY'
                   import plistlib
-                  def remove_uisupporteddevices(filepath):
-                      with open(filepath, 'rb') as f:
-                          plist = plistlib.load(f)
+                  plist_path = "main/tmp/Payload/YouTube.app/Info.plist"
+                  with open(plist_path, "rb") as f:
+                      plist = plistlib.load(f)
+                  plist.pop("UISupportedDevices", None)
+                  with open(plist_path, "wb") as f:
+                      plistlib.dump(plist, f)
+                  PY
 
-                      if 'UISupportedDevices' in plist:
-                          del plist['UISupportedDevices']
-
-                      with open(filepath, 'wb') as f:
-                          plistlib.dump(plist, f)
-
-                  filepath = 'main/tmp/Payload/YouTube.app/Info.plist'
-                  remove_uisupporteddevices(filepath)
-                  EOF
-                  # Manually install the Open in YouTube extension
-                  cp -R main/Extensions/*.appex main/tmp/Payload/YouTube.app/PlugIns || true
+                  # Copy Open in YouTube extension only if it exists (completely optional)
+                  if ls main/Extensions/*.appex >/dev/null 2>&1; then
+                    cp -R main/Extensions/*.appex main/tmp/Payload/YouTube.app/PlugIns/
+                    echo "Open in YouTube extension installed"
+                  else
+                    echo "No .appex extension found – skipping (normal for most forks now)"
+                  fi
               env:
                   THEOS: ${{ github.workspace }}/theos
                   YOUTUBE_URL: ${{ env.URL_YT }}
